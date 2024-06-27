@@ -31,6 +31,13 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+import static java.awt.image.ImageObserver.ERROR;
+import static java.sql.Types.BOOLEAN;
+import static java.sql.Types.NUMERIC;
+import static org.apache.poi.ss.usermodel.DataValidationConstraint.ValidationType.FORMULA;
+import static org.apache.xmlbeans.impl.piccolo.xml.Piccolo.STRING;
+
+
 @Service
 @Transactional
 public class ExcelDataToTableSaved {
@@ -57,6 +64,7 @@ public class ExcelDataToTableSaved {
     public  ExcelDataDTO ExcelDataToTableSave(MultipartFile file) throws IOException, SQLException {
         Workbook workbook = null;
         Connection connection = null;
+
 
         ExcelDataDTO excelDataDTO = new ExcelDataDTO();
 
@@ -90,11 +98,15 @@ public class ExcelDataToTableSaved {
         while (sheetIterator.hasNext()) {
             Sheets sheets =new Sheets();
             Sheet sheet = sheetIterator.next();
+
+
             String tableName = sheet.getSheetName().trim().replaceAll("[^a-zA-Z0-9_]", "_");
             sheets.setSheetName(tableName);
             sheets.setExcelData(excelData);
             System.out.println("Processing sheet: " + tableName);
+
             sheets=sheetService.save(sheets);
+
             SheetDTO sheetDTO =sheetMapping.toDTO(sheets);
             // Creating table in MySQL database using the sheet name and first row as column names
             List<String> colNames = createTable(connection, sheet, tableName);
@@ -113,6 +125,8 @@ public class ExcelDataToTableSaved {
             excelDataDTO.setSheetDTOList(sheetDTOList);
             // Iterating over rows and inserting data into the MySQL database
             DataFormatter dataFormatter = new DataFormatter();
+            FormulaEvaluator formulaEvaluator = sheet.getWorkbook().getCreationHelper().createFormulaEvaluator();
+
             Iterator<Row> rowIterator = sheet.rowIterator();
 
             // Skip the header row
@@ -128,12 +142,13 @@ public class ExcelDataToTableSaved {
                 while (j < colNames.size() || cellIterator.hasNext()) {
 
                     Cell cell = null;
+                    String cellValue = "";
                     try {
                         cell = cellIterator.next();
                     } catch (Exception e) {
                         System.out.println("Exception in cell iterator for row " + row.getRowNum() + ": Cell is Empty for column: " + colNames.get(j));
                     }
-                    String cellValue = dataFormatter.formatCellValue(cell);
+                    cellValue = getCellValue(cell, dataFormatter, formulaEvaluator);
                     rowValues.add(cellValue);
                     j++;
                 }
@@ -154,6 +169,22 @@ public class ExcelDataToTableSaved {
         workbook.close();
 
         return excelDataDTO;
+    }
+
+    private static String getCellValue(Cell cell, DataFormatter dataFormatter, FormulaEvaluator formulaEvaluator) {
+        if (cell == null) {
+            return "";
+        }
+        switch (cell.getCellType()) {
+            case FORMULA:
+                return dataFormatter.formatCellValue(cell, formulaEvaluator);
+            case NUMERIC:
+            case STRING:
+            case BOOLEAN:
+            case ERROR:
+            default:
+                return dataFormatter.formatCellValue(cell);
+        }
     }
     private static List<String> createTable(Connection connection, Sheet sheet, String tableName) throws SQLException {
         Row headerRow = sheet.getRow(0);
